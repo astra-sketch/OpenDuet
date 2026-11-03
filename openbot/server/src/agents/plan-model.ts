@@ -27,6 +27,31 @@ export type PlanModelConfig = {
 };
 export { PLAN_RUN_COMPLETED };
 
+/**
+ * The offered tool a plan harness means by `requested`, or undefined when it names none.
+ *
+ * The SDK calls tools by whatever name the model wrote, and the model writes what it was told. An
+ * instruction that says "use OUTLOOK_QUERY_EMAILS" gets that bare name back, while the tool on offer
+ * is `mcp__composio-outlook__OUTLOOK_QUERY_EMAILS`; the reverse happens when a prompt carries the
+ * qualified name and the tool is offered bare. Either way the intent is unambiguous when exactly one
+ * offered tool matches on the `__` boundary, so that one is used. Anything else, a native SDK tool
+ * such as `Bash` included, is still refused: a guess between two tools is not a decision to make here.
+ */
+export function offeredToolName(
+  requested: string,
+  offered: ReadonlySet<string>,
+): string | undefined {
+  if (offered.has(requested)) return requested;
+  const qualified = [...offered].filter((name) =>
+    name.endsWith(`__${requested}`),
+  );
+  if (qualified.length === 1) return qualified[0];
+  const boundary = requested.lastIndexOf("__");
+  const bare = boundary === -1 ? "" : requested.slice(boundary + 2);
+  if (bare && offered.has(bare)) return bare;
+  return undefined;
+}
+
 /** A plan is an explicit desktop credential choice, not an API-key fallback. */
 export function planModelForEnvironment(
   environment: Record<string, string | undefined>,
@@ -355,22 +380,24 @@ export class PlanModel implements PlanLanguageModel {
                       id: event.messageId,
                     });
                     break;
-                  case "TOOL_CALL_START":
-                    if (!names.has(event.toolCallName))
+                  case "TOOL_CALL_START": {
+                    const name = offeredToolName(event.toolCallName, names);
+                    if (!name)
                       throw new Error(
                         `The plan harness attempted an unoffered tool: ${event.toolCallName}`,
                       );
                     calls.set(event.toolCallId, {
-                      name: event.toolCallName,
+                      name,
                       args: "",
                       ended: false,
                     });
                     controller.enqueue({
                       type: "tool-input-start",
                       id: event.toolCallId,
-                      toolName: event.toolCallName,
+                      toolName: name,
                     });
                     break;
+                  }
                   case "TOOL_CALL_ARGS": {
                     const call = calls.get(event.toolCallId);
                     if (!call || call.ended)
