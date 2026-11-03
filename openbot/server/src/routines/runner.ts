@@ -58,6 +58,10 @@ function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** A model provider's usage-limit notice, e.g. "You've hit your weekly limit · resets 9pm (UTC)". */
+const USAGE_LIMIT_REPLY =
+  /^\s*you['’]ve (hit|reached) your (\w+ )?(usage )?limit/i;
+
 export function createRoutineRunner(options: {
   routineStore: RoutineStore;
   channelStore: ChannelStore;
@@ -149,6 +153,8 @@ export function createRoutineRunner(options: {
         threadId: channel.threadId,
         instruction,
       }));
+      // A usage-limit notice comes back as a reply, not an error; it is still a failed firing.
+      if (USAGE_LIMIT_REPLY.test(replyText)) throw new Error(replyText.trim());
     } catch (error) {
       if (error instanceof HeadlessToolSuspension) {
         await routineStore.finishRun(

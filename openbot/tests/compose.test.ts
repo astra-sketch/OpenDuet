@@ -172,10 +172,15 @@ function runLangGraphAguiModelProbe(
 }
 
 function runComposeConfig(env: Record<string, string>) {
+  // Pin the shipped compose file. A local docker-compose.override.yml (auto-merged by
+  // Compose when -f is omitted) would otherwise leak developer endpoints into these
+  // assertions — see openbot/docker-compose.override.yml on this machine.
   const output = execFileSync(
     "docker",
     [
       "compose",
+      "-f",
+      "docker-compose.yml",
       "--env-file",
       "/dev/null",
       "--profile",

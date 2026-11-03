@@ -190,6 +190,20 @@ describe("createRoutineRunner", () => {
     ]);
   });
 
+  test("records a usage-limit reply as a failure carrying the limit text", async () => {
+    const limit = "You've hit your weekly limit · resets 9pm (UTC)";
+    const { runner, recorded } = harness({
+      runTurn: async () => ({ replyText: limit }),
+      failures: 2,
+    });
+
+    await runner.run(RUN_ID);
+
+    expect(recorded.finished).toEqual([
+      { runId: RUN_ID, status: "failed", error: limit },
+    ]);
+  });
+
   test("says so once on the first failure after a success", async () => {
     const { runner, recorded } = harness({
       runTurn: throwingTurn,

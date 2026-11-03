@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
 import {
+  offeredToolName,
   PLAN_RUN_COMPLETED,
   PlanModel,
   planMessages,
@@ -193,6 +194,88 @@ test("the bridge refuses an unoffered native tool instead of executing it", asyn
         ],
       }),
     ).rejects.toThrow("unoffered tool: Bash");
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("a tool named without its server prefix resolves to the one offered tool it means", () => {
+  const offered = new Set([
+    "mcp__composio-outlook__OUTLOOK_QUERY_EMAILS",
+    "mcp__composio-outlook__OUTLOOK_GET_MESSAGE",
+    "add_tasks",
+  ]);
+  expect(offeredToolName("add_tasks", offered)).toBe("add_tasks");
+  expect(offeredToolName("OUTLOOK_QUERY_EMAILS", offered)).toBe(
+    "mcp__composio-outlook__OUTLOOK_QUERY_EMAILS",
+  );
+  // The other direction: a qualified name for a tool offered bare.
+  expect(offeredToolName("mcp__tasks__add_tasks", offered)).toBe("add_tasks");
+  // Native SDK tools and partial names stay refused.
+  expect(offeredToolName("Bash", offered)).toBeUndefined();
+  expect(offeredToolName("EMAILS", offered)).toBeUndefined();
+  expect(offeredToolName("dd_tasks", offered)).toBeUndefined();
+  // Two servers offering the same bare name is a guess, so it is refused.
+  expect(
+    offeredToolName(
+      "OUTLOOK_QUERY_EMAILS",
+      new Set([
+        "mcp__composio-outlook__OUTLOOK_QUERY_EMAILS",
+        "mcp__outlook-two__OUTLOOK_QUERY_EMAILS",
+      ]),
+    ),
+  ).toBeUndefined();
+});
+
+test("the bridge calls the offered tool when the harness drops its server prefix", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      const body = await request.json();
+      return new Response(
+        [
+          { type: "RUN_STARTED", threadId: body.threadId, runId: body.runId },
+          {
+            type: "TOOL_CALL_START",
+            toolCallId: "mail",
+            toolCallName: "OUTLOOK_QUERY_EMAILS",
+          },
+          { type: "TOOL_CALL_ARGS", toolCallId: "mail", delta: '{"top":5}' },
+          { type: "TOOL_CALL_END", toolCallId: "mail" },
+          { type: "RUN_FINISHED", threadId: body.threadId, runId: body.runId },
+        ]
+          .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+          .join(""),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+  try {
+    const model = new PlanModel(
+      { provider: "claude", endpoint: server.url, token: "owned" },
+      "openduet",
+      { threadId: "channel" },
+    );
+    const result = await model.doGenerate({
+      prompt: [
+        { role: "user", content: [{ type: "text", text: "Read my mail" }] },
+      ],
+      tools: [
+        {
+          type: "function",
+          name: "mcp__composio-outlook__OUTLOOK_QUERY_EMAILS",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+    });
+    expect(result.content).toEqual([
+      {
+        type: "tool-call",
+        toolCallId: "mail",
+        toolName: "mcp__composio-outlook__OUTLOOK_QUERY_EMAILS",
+        input: '{"top":5}',
+      },
+    ]);
   } finally {
     server.stop(true);
   }
